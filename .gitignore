@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated outputs (regenerable from code) — matches at any depth,
+# so this also catches goodness_of_fit/results/ and goodness_of_fit/gof_output_all_configs/
+gof_output*/
+gof_all/
+
+# Early draft code
+first_attempt/
+
+# Result artifacts dumped at root
+*.csv
+*.png
+
+# Editor/OS cruft
+.DS_Store
+.vscode/
