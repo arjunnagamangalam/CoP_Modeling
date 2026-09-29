@@ -13,7 +13,6 @@ first_attempt/
 
 # Result artifacts dumped at root
 *.csv
-*.png
 
 # Editor/OS cruft
 .DS_Store
