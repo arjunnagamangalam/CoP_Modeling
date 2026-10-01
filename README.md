@@ -4,25 +4,24 @@ A physics-based dual-pathway stochastic oscillator model of center-of-pressure (
 
 ## Repository structure
 
-\`\`\`
 final_model/
 ├── data_loading/
-│   ├── load_raw_sessions.py      # Loads and cleans raw CoP recordings (10 Hz zero-phase Butterworth filter)
-│   ├── find_outlier_trials.py    # Flags/removes outlier trials prior to calibration
-│   └── verify_parquet.py         # Sanity-checks the cleaned parquet output
+│ ├── load_raw_sessions.py # Rebuilds cleaned_balance_all.parquet from raw per-trial force-plate CSVs (active-plate selection, calibration-trial exclusion, 10 Hz zero-phase Butterworth filter, per-trial baseline subtraction)
+│ ├── verify_parquet.py # Sanity-checks a cleaned parquet: schema, missing/non-finite values, trial structure, per-trial baseline, unit/magnitude plausibility, and known directional patterns (vision/feedback)
+│ └── find_outlier_trials.py # Diagnostic follow-up to verify_parquet.py: lists/plots the worst outlier trials by AP sway for manual review
 ├── scripts/
-│   ├── dual_pathway_matrix_system.py    # Dual-pathway SDE system definition (state matrices)
-│   ├── kalman_discretize.py             # Discretizes the continuous-time SDE for simulation
-│   ├── dual_pathway_smm_calibration.py  # SMM calibration: fits per-condition parameters to target statistics
-│   ├── model_tools.py                   # Shared utilities: batch simulation, train/test split, config grouping
-│   └── run_dual_pathway_all_configs.py  # Loads cleaned data per (vision, feedback) config; CONFIGS registry
+│ ├── dual_pathway_matrix_system.py # Dual-pathway SDE system definition (state matrices)
+│ ├── kalman_discretize.py # Discretizes the continuous-time SDE for simulation
+│ ├── dual_pathway_smm_calibration.py # SMM calibration: fits per-condition parameters to target statistics
+│ ├── model_tools.py # Core toolbox: Van Loan SDE discretization, batched simulation, train/test split, 18-metric computation, ringing diagnostic, and the predicted-vs-real/PSD comparison plots
+│ └── run_dual_pathway_all_configs.py # Main calibration driver: multi-restart SMM across all 4 configs in parallel, selects best non-ringing result per config, saves params/metrics/plots
 ├── goodness_of_fit/
-│   ├── goodness_of_fit_dual_pathway.py  # Main GOF driver: ensemble comparison, composite score, KS tests
-│   ├── goodness_of_fit_helpers.py       # Metric computation and scoring helpers
-│   ├── plot_rms_variability.py          # RMS dispersion (real vs. simulated) comparison plots
-│   └── rms_low_high_freq.py             # Low-/high-frequency RMS band-split analysis and plots
+│ ├── goodness_of_fit_dual_pathway.py # Main GOF driver: ensemble comparison, composite score, KS tests
+│ ├── goodness_of_fit_helpers.py # 20-metric computation (RMS/LF/HF, P2P, velocity, F50, skew, kurtosis, two-regime DFA), composite/KS scoring, and comparison plots
+│ ├── plot_rms_variability.py # RMS dispersion (real vs. simulated) comparison plots
+│ └── rms_low_high_freq.py # Low-/high-frequency RMS band-split analysis and plots
 └── README.md
-\`\`\`
+
 
 Data (`cleaned_balance_all.parquet`) lives one level up, at `../data/processed/`, and is not tracked in this repo.
 
