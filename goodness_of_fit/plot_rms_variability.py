@@ -1,40 +1,12 @@
-
+"""Plots real-vs-simulated RMS variability (across-trial SD of RMS) for ML
+and AP, across all 4 vision/feedback conditions, reading the real_std/
+sim_std figures straight out of each condition's gof_summary.csv (written
+by goodness_of_fit_dual_pathway.py). Simulated trials are expected to be
+under-dispersed relative to real trials unless subject-effect variance
+injection was used during the GOF run -- this plot is the diagnostic for
+how much so, per condition and axis.
 """
-Plots the "RMS Variability" metric your advisor asked for -- across-trial
-SD of RMS, real vs. simulated -- for both axes (ML, AP), across all 4
-conditions, matching the definition already used in your GOF write-up
-(Table 3: "Across-trial SD of RMS, real vs. simulated").
 
-DOESN'T RECOMPUTE ANYTHING: real_std and sim_std for ml_rms_cm/ap_rms_cm
-are already columns in the gof_summary.csv files run_dual_pathway_gof.py
-(via dual_pathway_gof.py's evaluate_goodness_of_fit) saves per condition
--- this script just reads those four CSVs and plots them, so the numbers
-here are guaranteed consistent with whatever GOF run produced those
-files, not a separate/divergent calculation.
-
-WHY SD, NOT VARIANCE OR CV: matches the "Across-trial SD of RMS, real vs.
-simulated" framing you settled on earlier for this section, directly in
-RMS's own units (cm) -- not normalized, so the bars are directly
-comparable to the RMS values themselves.
-
-USAGE:
-    python3 plot_rms_variability.py \\
-        --gof-dir gof_output \\
-        --out rms_variability.png
-
-Expects --gof-dir to contain the standard layout run_dual_pathway_gof.py
-writes: gof_<Vision>_<Feedback>/gof_summary.csv, one folder per
-condition. If your CSVs live somewhere else (different --out-dir per
-config, or renamed), pass --csv four times instead, each as
-VISION/FEEDBACK=path/to/gof_summary.csv, e.g.:
-
-    python3 plot_rms_variability.py \\
-        --csv Close/Silent=runs/cs/gof_summary.csv \\
-        --csv Close/Auditory=runs/ca/gof_summary.csv \\
-        --csv Open/Silent=runs/os/gof_summary.csv \\
-        --csv Open/Auditory=runs/oa/gof_summary.csv \\
-        --out rms_variability.png
-"""
 import argparse
 from pathlib import Path
 
@@ -49,6 +21,9 @@ CONFIGS = [("Close", "Silent"), ("Close", "Auditory"), ("Open", "Silent"), ("Ope
 RMS_COLS = {"ML": "ml_rms_cm", "AP": "ap_rms_cm"}
 
 def _load_one_csv(csv_path):
+    """Reads one condition's gof_summary.csv and pulls out real/sim
+    mean + std for ml_rms_cm/ap_rms_cm, returning {"ML": {...}, "AP": {...}}."""
+
     csv_path = Path(csv_path)
     if not csv_path.exists():
         raise FileNotFoundError(
@@ -86,6 +61,10 @@ def load_rms_variability(gof_dir=None, explicit_csvs=None, configs=CONFIGS):
 
 
 def plot_rms_variability(data, out_path):
+    """Grouped bar chart (real vs. simulated across-trial RMS SD, one
+    panel per axis) across all conditions in `data`, annotated with the
+    real/sim ratio above each pair; saves to out_path."""
+
     labels = list(data.keys())
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
     width = 0.35
@@ -121,6 +100,9 @@ def plot_rms_variability(data, out_path):
 
 
 def print_summary(data):
+    """Prints a plain-text table of real_std/sim_std/ratio per condition
+    and axis -- the console counterpart of plot_rms_variability's figure."""
+
     print("\nRMS Variability (across-trial SD, real vs. simulated):")
     print(f"  {'condition':16s} {'axis':4s} {'real_std':>10s} {'sim_std':>10s} {'ratio':>8s}")
     for lbl in data:
@@ -142,6 +124,11 @@ def _parse_csv_arg(values):
     return out
 
 def main():
+    """CLI entry point: resolves which gof_summary.csv files to read
+    (either --gof-dir's standard per-condition layout, or explicit
+    --csv Vision/Feedback=path overrides), then prints the summary table
+    and saves the comparison plot to --out."""
+    
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--gof-dir", default=None,
                     help="Directory containing gof_<Vision>_<Feedback>/gof_summary.csv "

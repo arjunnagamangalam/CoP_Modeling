@@ -1,54 +1,20 @@
+"""Goodness-of-fit CLI driver for the dual-pathway model.
+
+For one or all 4 vision/feedback configs: loads that config's calibrated
+parameters (results/metrics/<hf_threshold_tag>/dual_pathway_params_<vision>_
+<feedback>.json), simulates a fresh batch of trials with disjoint seeds from
+calibration, and compares them against the held-out real test trials used
+during calibration across 20 ensemble-level summary statistics (relative
+error + two-sample KS test per metric, plus a composite score).
+
+Simulated trials can optionally get between-subject variance injection
+(--subject-effect-* flags) -- a lognormal noise-scale perturbation per
+virtual subject that widens RMS dispersion to match real inter-subject
+variability without altering damping/PSD shape/DFA -- or, as a superseded
+alternative, --use-bootstrap, which draws each trial's parameters from a
+separate bootstrap-recalibration replicate instead.
 """
-Goodness-of-fit evaluation wired directly into your existing dual-pathway
-pipeline -- no manual npz export. Reuses, unchanged:
 
-  - dual_pathway_smm.simulate_dual_pathway_batch to generate simulated
-    trajectories from the SAME calibrated params your run already saved
-    to dual_pathway_params_{vision}_{feedback}.json (run_dual_pathway_
-    all_configs.py's _json_safe() output -- omega_fast_sq_ml/ap etc. are
-    already computed and present, so no need to re-derive them from
-    omega_slow_sq + gap).
-  - run_dual_pathway_all_configs.load_config_data(vision, feedback), so
-    this evaluates against the EXACT held-out test set your calibration
-    run used -- same default seed=0 into generalized_fp_heldout.
-    split_trials, not a fresh random split that would silently redefine
-    what "held-out" means here.
-  - The ML/AP seed-decorrelation convention from dual_pathway_smm.
-    simulate_dual_pathway_and_compute_stats (AP seeds offset by +100000
-    from ML seeds) -- copied exactly, not reinvented, so simulated ML/AP
-    noise stays independent the same way it does during calibration.
-  - dual_pathway_gof.py's metric table / composite-score / KS-test /
-    PSD / DFA / plotting machinery, entirely unchanged, so numbers here
-    are directly comparable to anything produced with that script.
-
-REQUIRES, all importable from this file's directory (put this file in
-the same directory as run_dual_pathway_all_configs.py):
-    run_dual_pathway_all_configs.py, dual_pathway_smm.py,
-    generalized_fp_heldout.py, bootstrap_noise_model.py,
-    dual_pathway_system.py, kalman_discretize.py, dual_pathway_gof.py
-plus the saved dual_pathway_params_{vision}_{feedback}.json files
-run_dual_pathway_all_configs.py already writes to results/metrics/<tag>/.
-
-NOT INDEPENDENTLY TEST-RUN: I don't have dual_pathway_system.py,
-kalman_discretize.py, generalized_fp_heldout.py, or bootstrap_noise_
-model.py in this sandbox, so I could not execute this end-to-end myself
-the way load_raw_sessions.py and dual_pathway_gof.py were tested. I
-traced every call against the exact function signatures/return shapes
-in the two files you shared (run_dual_pathway_all_configs.py, dual_
-pathway_smm.py), but please run it and send me the output/any traceback
--- I'd rather fix a real error against real output than have you
-discover a mistake I didn't catch.
-
-USAGE:
-    python3 run_dual_pathway_gof.py \\
-        --params-dir /path/to/results/metrics/hf0p3hz \\
-        --vision Close --feedback Auditory \\
-        --out-dir gof_close_auditory [--n-sim-seeds 30]
-
-    Omit --vision/--feedback to run all 4 configs (same CONFIGS list as
-    run_dual_pathway_all_configs.py), writing gof_<vision>_<feedback>/
-    subfolders under --out-dir.
-"""
 import argparse
 import json
 import sys
@@ -62,7 +28,7 @@ from scipy.signal import butter, filtfilt
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from scripts.run_dual_pathway_all_configs import load_config_data, CONFIGS
-from scripts.model_tools import simulate_dual_pathway_batch, split_trials, GROUP_COLS, BURN_IN_SECONDS
+from scripts.model_tools import simulate_dual_pathway_batch, GROUP_COLS, BURN_IN_SECONDS
 from goodness_of_fit.goodness_of_fit_helpers import evaluate_goodness_of_fit
 
 def apply_filter(x, fs, cutoff_hz=None, order=4):
@@ -83,6 +49,10 @@ def apply_filter(x, fs, cutoff_hz=None, order=4):
 
 
 def load_calibrated_params(params_dir, vision, feedback):
+    """Loads the single winning calibrated-params dict for one (vision,
+    feedback) config, as written by run_dual_pathway_all_configs.py to
+    dual_pathway_params_<vision>_<feedback>.json in params_dir."""
+
     path = Path(params_dir) / f"dual_pathway_params_{vision}_{feedback}.json"
     if not path.exists():
         raise FileNotFoundError(
@@ -164,6 +134,7 @@ def simulate_trials_from_params(params, fs, duration_seconds, seeds, filter_cuto
     real_std. `params` is ignored (may be None) when bootstrap_params_list
     is given; the original single-params/batched path below is otherwise
     completely unchanged from before this option existed."""
+
     if bootstrap_params_list:
         rng = np.random.default_rng(bootstrap_rng_seed)
         trials = []
@@ -412,6 +383,12 @@ def _print_subject_effect_achieved(sim_trials, trials_per_virtual_subject, cv_ta
 
 
 def real_trials_from_df(df, x_col="cop_x_clean", y_col="cop_y_clean"):
+    """Groups the held-out real dataframe by GROUP_COLS (one group per
+    real trial) and returns the same (x, y) trial-list format
+    simulate_trials_from_params produces, plus the sampling rate read
+    off the first row of each group, so real and simulated trials can be
+    compared through the same evaluate_goodness_of_fit call."""
+
     trials = []
     fs = None
     for _, g in df.groupby(GROUP_COLS, observed=True):
@@ -426,6 +403,16 @@ def run_one_config(params_dir, vision, feedback, out_dir, n_sim_seeds=30,
                     subject_effect_baseline_gof=None, subject_effect_cv_ml=None,
                     subject_effect_cv_ap=None, trials_per_virtual_subject=3,
                     subject_effect_rng_seed=None):
+    """Runs the full GOF evaluation for one (vision, feedback) config:
+    loads that config's calibrated params (or bootstrap replicates, if
+    --use-bootstrap) and its held-out real test trials (the same split
+    run_dual_pathway_all_configs.py validated against), simulates a fresh
+    batch of n_sim_seeds trials (optionally with between-subject variance
+    injection -- see subject-effect section above), and hands both trial
+    sets to evaluate_goodness_of_fit for the metric comparison, composite
+    score, and KS tests. Returns whatever evaluate_goodness_of_fit
+    returns (summary, composite)."""
+
     print(f"\n{'#' * 100}\n# {vision}/{feedback}\n{'#' * 100}")
 
     use_subject_effects = (subject_effect_baseline_gof is not None
@@ -501,6 +488,12 @@ def run_one_config(params_dir, vision, feedback, out_dir, n_sim_seeds=30,
 
 
 def main():
+    """CLI entry point. Parses all flags above, resolves which config(s)
+    to run (a single --vision/--feedback pair, or all 4 CONFIGS when
+    neither is given), calls run_one_config for each, and -- when more
+    than one config ran -- prints a final composite-score summary table
+    across configs."""
+
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--params-dir", required=True,
                    help="Directory containing dual_pathway_params_<vision>_<feedback>.json "

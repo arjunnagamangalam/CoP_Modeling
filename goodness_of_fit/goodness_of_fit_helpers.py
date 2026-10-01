@@ -1,5 +1,6 @@
-import argparse
-import sys
+"""
+All helpers for goodness_of_fit_dual_pathway.py.
+"""
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,9 @@ def _band_limited_rms(cm, fs, cutoff_hz=LOW_HIGH_RMS_CUTOFF_HZ, order=4):
     return float(np.sqrt(np.mean(low ** 2))), float(np.sqrt(np.mean(high ** 2)))
 
 def _median_power_freq(sig_cm, fs):
+    """F50: the frequency below which half of a signal's Welch PSD power
+    falls (median power frequency), via cumulative-sum interpolation."""
+
     if len(sig_cm) < int(fs * 2):
         return np.nan
     freqs, psd = welch(sig_cm, fs=fs, nperseg=min(len(sig_cm), int(fs * 10)))
@@ -41,6 +45,11 @@ def _median_power_freq(sig_cm, fs):
     return float(freqs[np.searchsorted(cum, half)])
 
 def dfa_curve(x, fs, order=1, scale_min=None, scale_max_frac=0.25, n_scales=20):
+    """Detrended Fluctuation Analysis: integrates x into a cumulative
+    profile, then for each window scale n in a geometric grid, detrends
+    (polynomial order `order`) each non-overlapping window and returns the
+    RMS residual F(n). Returns (scales, F) for log-log slope fitting."""
+
     x = np.asarray(x, dtype=float)
     N = len(x)
     if scale_min is None:
@@ -68,6 +77,13 @@ def dfa_curve(x, fs, order=1, scale_min=None, scale_max_frac=0.25, n_scales=20):
 
 
 def dfa_two_regime(x, fs, min_segment_points=3, **kwargs):
+    """Fits a two-regime (short-/long-timescale) breakpoint to a DFA curve:
+    searches candidate breakpoints for the split that minimizes total
+    squared residual of two separate log-log line fits. Falls back to a
+    single overall slope (alpha_short == alpha_long) if there aren't enough
+    points for two segments. Returns (alpha_short, alpha_long, breakpoint,
+    scales, F)."""
+
     scales, F = dfa_curve(x, fs, **kwargs)
     mask = np.isfinite(F) & (F > 0)
     scales, F = scales[mask], F[mask]
@@ -124,6 +140,9 @@ def metrics_table(trials, fs):
 
 
 def plot_metric_comparison(summary, out_path, label=""):
+    """Bar chart of real vs. simulated mean +/- std for every metric in
+    `summary` (goodness_of_fit_report's output); saves to out_path."""
+
     metrics = summary.index.tolist()
     fig, ax = plt.subplots(figsize=(max(8, len(metrics) * 0.5), 5))
     xpos = np.arange(len(metrics))
@@ -142,6 +161,9 @@ def plot_metric_comparison(summary, out_path, label=""):
 
 
 def plot_metric_distributions(real_df, sim_df, out_path, label=""):
+    """Grid of per-metric histograms (real vs. simulated, one subplot per
+    shared column of real_df/sim_df); saves to out_path."""
+
     cols = [c for c in real_df.columns if real_df[c].notna().sum() > 1]
     ncols = 4
     nrows = int(np.ceil(len(cols) / ncols))
@@ -163,6 +185,10 @@ def plot_metric_distributions(real_df, sim_df, out_path, label=""):
 
 
 def plot_psd_comparison(real_trials, sim_trials, fs, out_path, label=""):
+    """Mean PSD (ML and AP), real vs. simulated, with a geometric (log-space)
+    mean +/- 1 std band across trials -- see the inline comment below for
+    why geometric rather than arithmetic banding is used. Saves to out_path."""
+
     def psd_stack(trials, axis_idx):
         psds, freqs = [], None
         for tr in trials:
@@ -203,6 +229,10 @@ def plot_psd_comparison(real_trials, sim_trials, fs, out_path, label=""):
 
 
 def plot_dfa_curves(real_trials, sim_trials, fs, out_path, label=""):
+    """Mean DFA fluctuation curve (ML and AP), real vs. simulated, each
+    trial's curve interpolated onto a common scale grid before averaging;
+    saves to out_path."""
+
     def avg_curve(trials, axis_idx):
         curves = []
         common_scales = None
@@ -237,6 +267,10 @@ def plot_dfa_curves(real_trials, sim_trials, fs, out_path, label=""):
 
 
 def plot_example_trial(real_trial, sim_trial, fs, out_path, label=""):
+    """Overlays one real and one simulated example trial (ML and AP) --
+    purely qualitative illustration, not a GOF metric itself. Saves to
+    out_path."""
+    
     t = np.arange(len(real_trial[0])) / fs
     fig, axes = plt.subplots(1, 2, figsize=(14, 4))
     for ax, axis_idx, name in ((axes[0], 0, "ML"), (axes[1], 1, "AP")):
@@ -276,6 +310,7 @@ def goodness_of_fit_report(real_df, sim_df, weights=None, exclude_from_composite
     composite it can swamp real signal from the metrics that were
     actually optimized for. This never drops or hides the metric --
     only removes its vote in the single composite number."""
+
     rows = []
     for col in real_df.columns:
         real_vals = real_df[col].dropna().values
@@ -314,6 +349,7 @@ def evaluate_goodness_of_fit(real_trials, sim_trials, fs, out_dir, label="", wei
     (summary_df, composite_score). exclude_from_composite: see
     goodness_of_fit_report's docstring -- metrics still fully reported,
     just weighted 0 in the single composite number."""
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

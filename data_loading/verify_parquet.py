@@ -24,10 +24,15 @@ GROUP_COLS = ["subject_id", "vision", "feedback", "trial"]
 
 
 def _section(title):
+    """Prints a banner-style section header for the console report."""
+
     print(f"\n{'=' * 70}\n{title}\n{'=' * 70}")
 
 
 def check_schema(df):
+    """Section 1: reports missing/extra columns vs. EXPECTED_COLUMNS,
+    flags any dtype mismatch, and prints the total row count."""
+
     _section("1. SCHEMA")
     missing = set(EXPECTED_COLUMNS) - set(df.columns)
     extra = set(df.columns) - set(EXPECTED_COLUMNS)
@@ -45,6 +50,9 @@ def check_schema(df):
 
 
 def check_missing_and_finite(df):
+    """Section 2: counts NaN/inf values in cop_x_clean, cop_y_clean, and
+    sampling_rate_hz, flagging any column with a nonzero count."""
+
     _section("2. MISSING / NON-FINITE VALUES")
     for col in ["cop_x_clean", "cop_y_clean", "sampling_rate_hz"]:
         n_nan = df[col].isna().sum()
@@ -54,6 +62,11 @@ def check_missing_and_finite(df):
 
 
 def check_trial_structure(df):
+    """Section 3: reports subject/trial counts per vision x feedback
+    condition, per-trial sample-count consistency (flagging ragged
+    trials that deviate from the median), and the distinct sampling
+    rates present."""
+
     _section("3. TRIAL / SAMPLE-COUNT STRUCTURE")
     inventory = df[GROUP_COLS].drop_duplicates()
     print(f"  {inventory['subject_id'].nunique()} subjects, {len(inventory)} trials total")
@@ -76,6 +89,10 @@ def check_trial_structure(df):
 
 
 def check_baseline(df):
+    """Section 4: confirms every trial's first sample is exactly 0 on
+    both axes, the property the loader's baseline-subtraction step is
+    supposed to guarantee."""
+
     _section("4. BASELINE (first sample should be exactly 0 per trial)")
     firsts = df.groupby(GROUP_COLS, observed=True).first()
     bad_x = (firsts["cop_x_clean"].abs() > 1e-12).sum()
@@ -90,6 +107,12 @@ def check_baseline(df):
 
 
 def check_units_and_magnitude(df):
+    """Section 5: computes per-trial RMS/range (ML and AP, cm) and
+    compares the distribution against a plausible quiet-standing range,
+    flagging any trial whose RMS sway falls outside ~0.01-10cm (a sign
+    of a unit/scaling error). Returns the per-trial stats dataframe for
+    reuse by check_physiological_pattern."""
+
     _section("5. UNITS / MAGNITUDE (in meters; converted to cm below for readability)")
     print("  If this were still in millimeters, these numbers would be ~1000x too big.")
     print("  If it were accidentally double-converted, they'd be ~1000x too small.")
@@ -123,6 +146,11 @@ def check_units_and_magnitude(df):
 
 
 def check_physiological_pattern(stats, df):
+    """Section 6: checks the per-trial stats against two known tendencies
+    in postural-control data -- eyes-closed sway exceeding eyes-open, and
+    (more weakly/informationally) auditory feedback reducing sway versus
+    silent -- as a directional sanity check, not a hard pass/fail."""
+
     _section("6. DIRECTIONAL SANITY CHECK (not a hard pass/fail, just a known tendency)")
     print("  Well-established finding in postural-control studies: removing vision "
           "(eyes CLOSED) increases sway versus eyes OPEN, because the subject loses a "
@@ -145,6 +173,11 @@ def check_physiological_pattern(stats, df):
 
 
 def main(path):
+    """Entry point: loads the parquet and runs all 6 checks in order
+    (schema, missing/non-finite, trial structure, baseline, units/
+    magnitude, physiological pattern), printing a report section by
+    section."""
+    
     print(f"Loading {path} ...")
     df = pd.read_parquet(path)
 

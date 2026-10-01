@@ -1,165 +1,37 @@
 """
-Rebuilds cleaned_balance_all.parquet from the raw per-trial force-plate
-CSVs, after the original cleaned parquet (and the original loading script)
-were both lost.
+Builds cleaned_balance_all.parquet from raw per-trial force-plate CSVs
+(motion-capture-suite ASCII export: a "Devices" block of two force plates'
+channels, including a vendor-computed CoP in mm, followed by a
+"Trajectories" block that this loader ignores), after the original cleaned
+parquet and loading script were both lost.
 
-RAW FILE FORMAT (confirmed directly against a real sample file, not
-guessed -- see the numeric verification below and in this project's chat
-history):
+Per file: parses subject/vision/feedback/trial from the filename
+({subject}_{vision}_{feedback}_{trial}.csv; vision in Open/Close, feedback
+in Silent/Auditory -- Tactile/Combined files are skipped, and calibration
+files like "S01 Cal 01.csv" are detected via CALIBRATION_RE and excluded).
+Picks whichever force plate actually carries the subject's weight (by mean
+|Fz|); if both plates show a real load (observed for some subjects, not
+all), falls back to the dominant plate rather than dropping the trial --
+flagged and counted in load_all_sessions' printed report rather than done
+silently. Converts CoP (Cx/Cy, mm) to meters, applies a low-pass filter,
+then subtracts each trial's own first sample so every cleaned trial starts
+at exactly 0 (confirmed against the old cached parquet's own convention).
 
-  - Motion-capture-suite ("Cortex"-style) ASCII export, BOM-prefixed
-    ("Devices" as the very first line).
-  - Line 2: the analog sample rate in Hz (200 in the sample checked).
-  - Two stacked data blocks in one file: a "Devices" block (force-plate
-    channels) first, then a "Trajectories" block (motion-capture marker
-    positions) after a blank line. Only the Devices block is CoP data --
-    this loader stops there and never reads past the "Trajectories" line.
-  - The Devices block has TWO force plates side by side, each with 9
-    columns: Fx,Fy,Fz (N), Mx,My,Mz (N.mm), Cx,Cy,Cz (mm). Cx,Cy,Cz is a
-    VENDOR-COMPUTED CoP, not a raw channel -- verified numerically against
-    the standard formula:
-        Cx = -My/Fz + 200.0   (residual std ~0.0003 mm across 4000 samples)
-        Cy =  Mx/Fz + 300.0   (residual std ~0.0003 mm across 4000 samples)
-    i.e. Cx/Cy equal the textbook CoP formula plus a fixed calibration
-    offset (almost certainly the plate's known physical position). Since
-    every consumer of this data mean-centers each trial before using it,
-    that constant offset has zero effect on anything downstream -- using
-    Cx/Cy directly is equivalent to recomputing -My/Fz and Mx/Fz by hand,
-    and simpler/less error-prone (no risk of getting a plate-thickness
-    z-offset correction term wrong from memory).
-  - In quiet single-leg-plate-loaded trials only ONE of the two plates
-    actually carries the subject's weight -- the other reports Fz=0 and a
-    constant "no-load default" CoP (a clearly different, much larger-
-    magnitude offset than the active plate's -- e.g. (-1040.2, 296) vs the
-    active plate's (200, 300) pattern above). Which plate (#1 or #2) is
-    active was NOT confirmed to be consistent across all files, so this
-    loader auto-detects the active plate per file via mean |Fz|, rather
-    than hardcoding a device index.
-
-TWO-PLATE FALLBACK (your call was "no preference" -- this is MY judgment
-call, not a confirmed fact, flag it if trajectories still look off): a
-real production run turned up many Silent/Auditory files where BOTH
-plates read a real load -- e.g. every S02 trial has plate1~667N (body
-weight) AND plate2~51N; S03 ~739N/~54N; S16 ~614N/~84N. Each subject's
-secondary-plate magnitude is its OWN very consistent value (roughly
-7-14% of the main plate) across dozens of that subject's trials, and
-plenty of OTHER trials (e.g. the original S01 sample) have a clean
-single active plate. That pattern -- consistent per-subject, but not
-present in every trial or every subject -- reads much more like an
-imperfectly zeroed/tared secondary plate than a genuine deliberate
-two-plate stance (a real two-plate protocol would show up in every
-trial, every subject). So: this loader now treats "both plates active"
-the same as the clean single-plate case -- picks whichever plate has
-the larger mean|Fz| (the one actually carrying body weight) and ignores
-the other, rather than raising and dropping the trial. Every file this
-fallback fired on is now reported by load_all_sessions (both a count and
-the filenames, capped at 10 printed) specifically so you can spot-check
-a few before trusting them -- if it turns out these really were a
-genuine two-plate stance needing real force/moment combination across
-both plates, tell me and I'll redo this properly instead of guessing.
-  - Exactly one of the sample checked: 4000 samples in the Devices block
-    (Frame 1..2000, SubFrame 0/1 each) = 20s at 200Hz, matching this
-    project's established trial length/rate. Enforced here as a check,
-    not an assumption -- a file that doesn't match is flagged, not
-    silently truncated/padded.
-
-FILENAME CONVENTION (confirmed against the one sample provided --
-S01_Close_Auditory_31.csv): "{subject}_{vision}_{feedback}_{trial}.csv"
-where vision in {Open, Close} and feedback in {Silent, Auditory}. This
-loader parses subject/vision/feedback/trial from the FILENAME only (not
-from directory structure), so it works whether your raw files sit in one
-flat folder or nested per-subject subfolders -- it searches recursively.
-
-A real run also turned up feedback = "Tactile" and "Combined" files
-(e.g. S02_Close_Tactile_52.csv, S03_Open_Combined_03.csv) alongside
-Silent/Auditory. You confirmed you only want Silent/Auditory -- so
-FILENAME_RE deliberately does NOT match Tactile/Combined, and those
-files fall into the normal "skipped" list (reported, not silently
-dropped) rather than being loaded.
-
-CALIBRATION TRIALS (confirmed with you): each session includes a
-calibration trial that must be EXCLUDED from the cleaned dataset -- you
-gave "S01 Cal 01" as an example filename. This is a different naming
-convention from the real trials above (space-separated, "Cal" instead of
-a vision/feedback pair), so CALIBRATION_RE below matches it separately
-and BEFORE the normal filename parser runs, and such files are reported
-as explicitly excluded (not lumped in with genuinely malformed/unexpected
-filenames). It accepts both "Cal" and "Calibration", and either a space
-or underscore as the separator, since I only have the one example and
-don't know which your files actually use -- if a session's calibration
-file isn't being caught (check the "excluded as calibration trials"
-count printed against how many sessions you have), tell me its exact
-filename and I'll tighten/adjust the pattern.
-
-AXIS LABELING (Cx -> cop_x/"ML", Cy -> cop_y/"AP"): NOT independently
-confirmed against lab setup notes as of this writing -- this is the
-conventional default (x=ML, y=AP, matching Cx/Cy's column order in the
-file) but you should double check it against your force-plate mounting
-notes before trusting any ML-vs-AP-specific claim from the calibrated
-model. It does NOT affect calibration correctness either way (both axes
-are fit independently and symmetrically) -- getting it backwards would
-only mean the "ML" and "AP" labels in reports/plots are swapped for both
-real and simulated data alike, consistently, everywhere.
-
-CLEANING: this loader does four things beyond parsing: active-plate
-selection, mm -> m unit conversion, a LOW-PASS FILTER, and a per-trial
-BASELINE SUBTRACTION -- plus a sample-count sanity check.
-
-LOW-PASS FILTER (changed after real calibration output looked wrong --
-see below; cutoff itself is still an unconfirmed guess): originally you
-said no filter was used, and the loader shipped with none. After a real
-run through the (separate, older) dual-pathway model, the held-out real
-trajectories looked visibly noisier than before the parquet was lost,
-and the model's predicted-vs-real PSD comparison got noticeably worse.
-You then confirmed you DID likely use a Butterworth low-pass originally,
-but don't remember the exact cutoff. So: this loader now applies one by
-default -- 10Hz, 4th-order, zero-phase (filtfilt), via apply_filter()
-below -- since that's a commonly-cited value in this literature (range
-usually reported ~5-12.5Hz) and a reasonable starting point, NOT a
-confirmed match to whatever the original pipeline actually used. If
-downstream results (PSD shape, DFA, etc.) still look off, the cutoff is
-the first thing to revisit -- pass a different value via the CLI's 3rd
-argument or the filter_cutoff_hz= parameter and compare. Pass
-filter_cutoff_hz=None (or CLI value "none") to disable filtering
-entirely and get the raw signal back.
-
-BASELINE SUBTRACTION (confirmed with you, not guessed): every trial's
-cop_x_clean/cop_y_clean is shifted so its OWN first sample is exactly 0 --
-i.e. cop_x_clean = cx_filt - cx_filt[0], cop_y_clean = cy_filt - cy_filt[0].
-This was first noticed as a pattern in the still-cached old
-cleaned_balance_all.parquet (every trial checked had cop_x_clean ==
-cop_y_clean == 0.0 exactly at samples 0 and 1) and then confirmed
-directly with you before being wired in here, since it couldn't be
-verified numerically against the one raw sample file available (its raw
-trial number, 31, isn't among the trial labels present in the old
-cached data for that subject/condition -- see TRIAL LABELING below).
-IMPORTANT ordering: this subtraction happens AFTER the low-pass filter
-above, not before -- filtering a signal that's already been zeroed at
-one sample can nudge that sample slightly off zero again (filtfilt's
-edge-padding isn't perfectly DC-preserving right at the boundary), which
-would silently break the "starts at exactly 0" property the old cached
-data actually has. Filtering first, then zeroing the filtered signal's
-own first sample, guarantees the property holds regardless of the
-filter's edge behavior.
-
-TRIAL LABELING (confirmed with you): the 'trial' column is the raw
-filename's own trial number (e.g. "31"), used as-is -- NOT re-indexed
-per subject/condition. Also confirmed: no trial-selection/QC step is
-applied here -- every raw file found is loaded, however many trials that
-gives per subject/condition (the old cached parquet had exactly 8 per
-subject/condition, i.e. trial labels 0-7, which is a real mismatch
-against raw trial numbers like "31" -- you confirmed this loader should
-NOT try to replicate that particular subsetting).
-
-The output columns are still named cop_x_clean/cop_y_clean for schema
-compatibility with the rest of this project's code.
+Two unconfirmed defaults, called out here rather than asserted as fact:
+the 10 Hz 4th-order zero-phase Butterworth filter cutoff (the original
+pipeline's actual cutoff is unknown -- pass a different value via the CLI
+or filter_cutoff_hz= and compare if downstream PSD/DFA results look off),
+and the Cx->ML/Cy->AP axis mapping (conventional default, not confirmed
+against lab mounting notes -- doesn't affect calibration correctness,
+only which axis label ends up in reports/plots).
 
 USAGE:
     python3 load_raw_sessions.py /path/to/raw/session/files [output.parquet] [cutoff_hz]
 
-    cutoff_hz defaults to 10 (Hz) if omitted. Pass "none" to disable
-    filtering and get the raw (baseline-subtracted only) signal.
+    cutoff_hz defaults to 10 (Hz). Pass "none" to disable filtering and
+    get the raw (baseline-subtracted only) signal.
 """
+
 import re
 import sys
 import warnings
@@ -172,7 +44,7 @@ from scipy.signal import butter, filtfilt
 
 FILENAME_RE = re.compile(
     r"^(?P<subject>S\d+)_(?P<vision>Open|Close)_(?P<feedback>Silent|Auditory)_(?P<trial>\d+)\.csv$",
-    re.IGNORECASE,
+    re.IGNORECASE
 )
 
 # Calibration trials use a different naming convention entirely (example
@@ -188,6 +60,11 @@ CALIBRATION_RE = re.compile(
 
 
 def is_calibration_file(path: Path):
+    """True if `path`'s filename matches the calibration-trial naming
+    convention (CALIBRATION_RE), e.g. "S01 Cal 01.csv" -- such files are
+    excluded from the cleaned dataset entirely, before FILENAME_RE ever
+    runs on them."""
+
     return bool(CALIBRATION_RE.match(path.name))
 
 EXPECTED_DURATION_SECONDS = 20.0
@@ -202,6 +79,13 @@ MIN_ACTIVE_MEAN_ABS_FZ = 5.0  # newtons -- comfortably below a real ~590N
 
 
 def parse_filename(path: Path):
+    """Parses a real (non-calibration) trial filename against
+    FILENAME_RE and returns (subject_id, vision, feedback, trial) --
+    vision/feedback are capitalized to match this project's Open/Close
+    and Silent/Auditory conventions. Raises ValueError (not silently
+    skipped) if the filename doesn't match, naming the exact expected
+    pattern so a genuine naming-convention mismatch is easy to diagnose."""
+
     m = FILENAME_RE.match(path.name)
     if not m:
         raise ValueError(

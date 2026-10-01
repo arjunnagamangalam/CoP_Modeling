@@ -1,34 +1,11 @@
+"""Plots real-vs-simulated RMS split into low-/high-frequency bands (ML
+and AP), across all 4 vision/feedback conditions, reading the rms_lf_cm/
+rms_hf_cm figures straight out of each condition's gof_summary.csv
+(written by goodness_of_fit_dual_pathway.py). Companion to
+plot_rms_variability.py -- this one checks fit broken out by frequency
+band rather than overall dispersion.
 """
-Grouped bar charts of RMS for low- and high-frequency bands (cutoff
-0.3Hz), real vs. simulated, per axis (ML, AP), across all 4 conditions
--- the third thing your advisor asked for, alongside RMS Variability
-(plot_rms_variability.py) and DFA.
 
-WHY THIS SCRIPT INSTEAD OF THE OLD RADIAL ONE (radial_bandsplit_bars.py-
-style): that script (a) combines ML+AP into a single radial RMS(r) =
-sqrt(RMS(ML)^2+RMS(AP)^2) statistic, which is numerically dominated by ML
-(real ML RMS ~2x real AP RMS) and dilutes exactly the AP-specific
-fast-pathway finding this project's been chasing, and (b) evaluates
-against the FULL per-condition dataset with no held-out split, so "Real"
-there can include trials the model was calibrated on. This script avoids
-both: it reports ML and AP separately, and reads real_mean/real_std/
-sim_mean/sim_std directly from the gof_summary.csv files run_dual_pathway_
-gof.py already writes -- those come from a strictly held-out comparison
-(same seed=0 split load_config_data uses during calibration) against
-ml_rms_lf_cm/ml_rms_hf_cm/ap_rms_lf_cm/ap_rms_hf_cm, which dual_pathway_
-gof.py computes with the same 0.3Hz Butterworth low/high split
-(LOW_HIGH_RMS_CUTOFF_HZ) that matches hf_power_frac's own threshold.
-Doesn't recompute or re-touch the simulator -- just reads and plots what's
-already there, so these numbers are guaranteed consistent with the GOF
-report and the composite-score comparisons already done.
-
-USAGE:
-    python3 plot_rms_lowhigh_freq.py --gof-dir gof_output --out rms_lowhigh_freq.png
-
-Same --gof-dir / --csv conventions as plot_rms_variability.py -- see that
-script's docstring for the --csv override syntax if your CSVs aren't in
-the standard gof_<Vision>_<Feedback>/gof_summary.csv layout.
-"""
 import argparse
 from pathlib import Path
 
@@ -46,6 +23,10 @@ BAND_COLS = {
 
 
 def _load_one_csv(csv_path):
+    """Reads one condition's gof_summary.csv and pulls out real/sim
+    mean + std + rel_error_pct for each (axis, band) in BAND_COLS,
+    returning {(axis, band): {...}}."""
+
     csv_path = Path(csv_path)
     if not csv_path.exists():
         raise FileNotFoundError(
@@ -84,6 +65,11 @@ def load_rms_lowhigh(gof_dir=None, explicit_csvs=None, configs=CONFIGS):
 
 
 def plot_rms_lowhigh(data, out_path, cutoff_hz=0.3):
+    """2x2 grid of grouped bar charts (rows = ML/AP, columns = low-/high-
+    frequency band), real vs. simulated mean +/- std per condition in
+    `data`; saves to out_path. cutoff_hz is used only for axis/title
+    labeling (see main's --cutoff-hz help for why)."""
+
     labels = list(data.keys())
     x = np.arange(len(labels))
     width = 0.35
@@ -127,6 +113,10 @@ def plot_rms_lowhigh(data, out_path, cutoff_hz=0.3):
 
 
 def print_summary(data, cutoff_hz=0.3):
+    """Prints a plain-text table of real_mean/sim_mean/rel_error_pct per
+    condition, axis, and band -- the console counterpart of
+    plot_rms_lowhigh's figure."""
+
     print(f"\nRMS by frequency band (cutoff={cutoff_hz}Hz), real vs. simulated:")
     print(f"  {'condition':16s} {'axis':4s} {'band':5s} {'real_mean':>10s} "
           f"{'sim_mean':>10s} {'rel_err%':>9s}")
@@ -139,6 +129,8 @@ def print_summary(data, cutoff_hz=0.3):
 
 
 def _parse_csv_arg(values):
+    """--csv Vision/Feedback=path, repeated -- returns {"Vision/Feedback": path}."""
+
     out = {}
     for v in values:
         if "=" not in v:
@@ -150,6 +142,11 @@ def _parse_csv_arg(values):
 
 
 def main():
+    """CLI entry point: resolves which gof_summary.csv files to read
+    (either --gof-dir's standard per-condition layout, or explicit
+    --csv Vision/Feedback=path overrides), then prints the low/high-band
+    summary table and saves the comparison plot to --out."""
+    
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--gof-dir", default=None,
                     help="Directory containing gof_<Vision>_<Feedback>/gof_summary.csv "

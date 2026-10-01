@@ -1,3 +1,8 @@
+"""
+This file serves as a toolbox for all the components used in dual_pathway_smm_calibration.py,
+run_dual_pathway_all_configs.py,
+"""
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -59,6 +64,10 @@ def van_loan_discretize_general(A: np.ndarray, L: np.ndarray, D_diag: np.ndarray
     return F, Qd
 
 def _sim_pathway(omega_sq, gamma, D, fs, duration, seed):
+    """Single-seed Euler-Maruyama simulation of one damped oscillator
+    pathway (position x, velocity v). Used only by the ringing diagnostic
+    below, not the main (exact Van Loan) batched simulator."""
+
     dt = 1.0 / fs
     N = int(duration * fs)
     t = np.arange(N) * dt
@@ -74,6 +83,13 @@ def _sim_pathway(omega_sq, gamma, D, fs, duration, seed):
 
 def _local_ringiness_r2(omega_sq_fast, gamma_fast, D_fast, omega_sq_slow, gamma_slow, D_slow,
                          fs, duration, n_seeds=30, window_periods=1.5):
+    """Quantifies audible 'ringing': fits a local sinusoid at the slow
+    pathway's damped frequency to sliding windows of simulated x_fast+x_slow
+    and returns the mean/median R^2 of that fit -- high R^2 means the signal
+    still looks like a clean decaying sinusoid locally rather than genuine
+    broadband sway. Short-circuits to (0.0, 0.0) when zeta_slow >= 1
+    (overdamped, structurally can't ring)."""
+
     zeta_slow = gamma_slow / (2 * np.sqrt(omega_sq_slow))
     if zeta_slow >= 1.0:
         return (0.0, 0.0)
@@ -138,6 +154,11 @@ def simulate_dual_pathway_batch(omega_fast_sq: float, gamma_fast: float, omega_s
 
 def simulate_from_dual_pathway_result(result: dict, fs: float, duration_seconds: float = 20.0,
                                           seed=None) -> dict:
+    """Convenience wrapper: pulls calibrated ML/AP params out of a
+    calibration result dict and simulates one trial per axis (in meters),
+    using offset seeds (seed, seed+100000) so ML and AP draw independent
+    noise."""
+
     p = result['params']
     x_cm = simulate_dual_pathway_batch(p['omega_fast_sq_ml'], p['gamma_fast_ml'], p['omega_slow_sq_ml'],
                                           p['gamma_slow_ml'], p['D_fast_ml'], p['D_slow_ml'],
@@ -155,6 +176,10 @@ def plot_predicted_vs_real(test_df: pd.DataFrame, result: dict, fs: float,
                               vision: str, feedback: str, out_dir: Path,
                               duration_seconds: float = 20.0, zoom_seconds: float = 8.0,
                               seed: int = 0):
+    """Plots one held-out real trial against one simulated trial (full
+    duration + zoomed window, ML and AP), annotated with real-vs-predicted
+    summary statistics from the validation table; saves to out_dir."""
+
     n_pts = int(duration_seconds * fs)
     first_trial_key, first_trial = next(iter(test_df.groupby(GROUP_COLS, observed=True)))
     trial_subject, trial_vision, trial_feedback, trial_num = first_trial_key
@@ -221,6 +246,8 @@ def plot_predicted_vs_real(test_df: pd.DataFrame, result: dict, fs: float,
     print(f"\nSaved trajectory plot -> {out_path}")
 
 def compute_psd(x_cm, fs):
+    """Welch PSD of a mean-centered signal, nperseg capped at 10s of data."""
+
     freqs, psd = welch(x_cm - np.mean(x_cm), fs=fs, nperseg=min(len(x_cm), int(fs * 10)))
     return freqs, psd
 
@@ -232,11 +259,18 @@ except AttributeError:
 
 
 def high_freq_power_fraction(freqs, psd, threshold_hz=0.3):
+    """Fraction of total PSD power at/above threshold_hz (trapezoidal
+    integration). Post-hoc diagnostic version -- see _hf_power_fraction
+    below for the version wired into the fitted metric set."""
+
     total = _trapz(psd, freqs)
     hf = _trapz(psd[freqs >= threshold_hz], freqs[freqs >= threshold_hz])
     return hf / total if total > 0 else float('nan')
 
 def apply_filter(x, fs, cutoff_hz: float = 10.0, order=4):
+    """Zero-phase (filtfilt) low-pass Butterworth filter; cutoff_hz=None
+    passes the signal through unchanged."""
+
     if cutoff_hz is None:
         return x
     b, a = butter(order, cutoff_hz / (fs / 2.0), btype="low")
@@ -245,6 +279,10 @@ def apply_filter(x, fs, cutoff_hz: float = 10.0, order=4):
 def plot_psd_comparison(test_df: pd.DataFrame, result: dict, fs: float, vision: str, feedback: str,
                            out_dir: Path, duration_seconds: float = 20.0, n_seeds: int = 16,
                            threshold_hz: float = 0.3):
+    """Plots mean real vs. simulated PSD (ML and AP, averaged across
+    held-out trials / fresh seeds respectively), prints the high-frequency
+    power-fraction comparison, and saves the figure to out_dir."""
+
     p = result['params']
 
     real_psds_x, real_psds_y = [], []
@@ -344,15 +382,26 @@ def _hf_power_fraction(sig_cm: np.ndarray, fs: float, threshold_hz: float = None
     return float(high / total)
 
 def _extra_metric_names():
+    """Names/order of the 6 extended metrics appended by
+    _compute_extended_metric_vector (skew, kurtosis, HF power fraction;
+    ML and AP each)."""
+
     return ['skew_ap', 'skew_ml', 'kurtosis_ap', 'kurtosis_ml', 'hf_power_frac_ap', 'hf_power_frac_ml']
 
 def _metric_names():
+    """Names/order of the 12 base metrics returned by _compute_metric_vector."""
+
     return ['ellipse_area_95_cm2', 'rms_radial_cm', 'rms_ap_cm', 'rms_ml_cm',
             'p2p_ap_cm', 'p2p_ml_cm', 'mean_vel_planar_cms', 'mean_vel_ap_cms',
             'mean_vel_ml_cms', 'total_path_cm', 'f50_ap_hz', 'f50_ml_hz']
 
 
 def _compute_metric_vector(x: np.ndarray, y: np.ndarray, fs: float) -> np.ndarray:
+    """Computes the 12 base summary statistics (95% ellipse area, radial/
+    ML/AP RMS, ML/AP peak-to-peak, planar/ML/AP mean velocity, total path
+    length, ML/AP median power frequency F50) for one trial's ML/AP
+    trajectory (x, y in meters); return order matches _metric_names()."""
+
     dt = 1.0 / fs
     x_cm, y_cm = x * 100.0, y * 100.0
     r_cm = np.sqrt(x_cm**2 + y_cm**2)
@@ -403,6 +452,9 @@ def _compute_metric_vector(x: np.ndarray, y: np.ndarray, fs: float) -> np.ndarra
                       f50(y_cm), f50(x_cm)])
 
 def _all_metric_names():
+    """Full 18-name metric ordering used throughout calibration/diagnostics:
+    _metric_names() + _extra_metric_names()."""
+    
     return _metric_names() + _extra_metric_names()
 
 def _compute_extended_metric_vector(x: np.ndarray, y: np.ndarray, fs: float) -> np.ndarray:

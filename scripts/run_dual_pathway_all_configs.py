@@ -103,6 +103,9 @@ FAST_FLOOR_VALUE = 0.5 # MIN_ZETA_FAST floor -- fixes the under-damped fast AP
 HF_THRESHOLD_HZ = 0.3
 
 def load_config_data(vision: str, feedback: str, seed: int = 0):
+        """Loads the cleaned parquet, filters to one (vision, feedback)
+        configuration, and returns a train/test trial split plus sampling rate."""
+
         root_dir = Path(__file__).resolve().parent.parent
         cleaned_file = root_dir / "data" / "processed" / "cleaned_balance_all.parquet"
         df = pd.read_parquet(cleaned_file)
@@ -283,6 +286,12 @@ def _verify_fast_floor_is_enforced():
           f"being correctly enforced by the deployed dual_pathway_smm.py.")
     
 def main():
+    """Entry point: runs the three startup self-checks, loads all 4 configs'
+    data, fans out N_RESTARTS x 4 calibration tasks across worker processes,
+    selects each config's winning (non-ringing) restart, then saves its
+    validation table, calibrated params, and plots before printing a
+    cross-config summary."""
+    
     _verify_floor_is_enforced()
     _verify_hf_threshold_is_enforced()
     _verify_fast_floor_is_enforced()

@@ -27,6 +27,10 @@ GROUP_COLS = ["subject_id", "vision", "feedback", "trial"]
 
 
 def per_trial_stats(g):
+    """Per-trial (mean-centered) summary stats for one trial group: RMS
+    and peak-to-peak range for both ML (cop_x_clean) and AP
+    (cop_y_clean), in cm."""
+
     x_cm = (g["cop_x_clean"].values - g["cop_x_clean"].values.mean()) * 100.0
     y_cm = (g["cop_y_clean"].values - g["cop_y_clean"].values.mean()) * 100.0
     return pd.Series({
@@ -38,6 +42,12 @@ def per_trial_stats(g):
 
 
 def main(path, n_plots=5):
+    """Loads the cleaned parquet, computes per-trial RMS/range for ML/AP,
+    prints the 20 worst trials by rms_ap_cm plus a mean-vs-median Close-
+    vs-Open comparison (median is robust to a handful of outlier trials),
+    and saves trajectory plots (ML vs time, AP vs time, x-y path) for the
+    n_plots worst trials as PNGs for manual inspection."""
+    
     print(f"Loading {path} ...")
     df = pd.read_parquet(path)
 
