@@ -3,7 +3,7 @@
 A physics-based dual-pathway stochastic oscillator model of center-of-pressure (CoP) postural sway. Two independent, additively-summed damped stochastic oscillators (a fast and a slow pathway, one pair per ML/AP axis) are calibrated per vision/feedback configuration via Simulated Method of Moments (SMM), then validated against held-out real trials using a 20-metric ensemble-level goodness-of-fit analysis.
 
 ## Repository structure
-
+```
 final_model/
 ├── data_loading/
 │ ├── load_raw_sessions.py # Rebuilds cleaned_balance_all.parquet from raw per-trial force-plate CSVs (active-plate selection, calibration-trial exclusion, 10 Hz zero-phase Butterworth filter, per-trial baseline subtraction)
@@ -21,7 +21,7 @@ final_model/
 │ ├── plot_rms_variability.py # RMS dispersion (real vs. simulated) comparison plots
 │ └── rms_low_high_freq.py # Low-/high-frequency RMS band-split analysis and plots
 └── README.md
-
+```
 
 Data (`cleaned_balance_all.parquet`) lives one level up, at `../data/processed/`, and is not tracked in this repo.
 
